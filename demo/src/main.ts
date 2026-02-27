@@ -15,6 +15,46 @@ const demoModules: Record<string, () => Promise<{ default: DemoInit }>> = {
   "custom-functions": () => import("./demos/custom-functions"),
 };
 
+function renderAlgorithmPage(container: HTMLElement) {
+  const base = import.meta.env.BASE_URL;
+  container.innerHTML = `
+    <div class="home-page">
+      <h1 style="font-size: 28px; font-weight: 800; margin-bottom: 8px;">The Algorithm</h1>
+      <p style="color: var(--text-secondary); margin-bottom: 24px; max-width: 700px; line-height: 1.7;">
+        This library implements <strong>Manifold Dual Contouring</strong>, described in the paper
+        <em>"Manifold Dual Contouring"</em> by Scott Schaefer, Tao Ju, and Joe Warren (IEEE TVCG 2007).
+        The algorithm converts signed distance functions into 2-manifold triangle meshes while preserving
+        sharp features &mdash; producing clean, watertight geometry suitable for 3D printing and simulation.
+      </p>
+      <div style="margin-bottom: 32px;">
+        <a href="${base}manifold-dual-contouring.pdf" target="_blank"
+           style="display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px;
+                  background: var(--accent); color: white; border-radius: 6px;
+                  text-decoration: none; font-weight: 600; font-size: 14px;
+                  transition: background 150ms ease;"
+           onmouseover="this.style.background='var(--accent-hover)'"
+           onmouseout="this.style.background='var(--accent)'">
+          &#128196; Read the Paper (PDF, 2.6 MB)
+        </a>
+      </div>
+      <div style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden; max-width: 900px;">
+        <iframe src="${base}manifold-dual-contouring.pdf"
+                style="width: 100%; height: 75vh; border: none;"
+                title="Manifold Dual Contouring paper"></iframe>
+      </div>
+      <div class="about-section">
+        <h2>Key Properties</h2>
+        <ul style="color: var(--text-secondary); line-height: 1.8; padding-left: 20px; max-width: 700px;">
+          <li><strong>2-Manifold output</strong> &mdash; every edge is shared by exactly two triangles, producing watertight meshes</li>
+          <li><strong>Sharp feature preservation</strong> &mdash; uses QEF (Quadratic Error Function) minimization to place vertices on sharp edges and corners</li>
+          <li><strong>Adaptive resolution</strong> &mdash; octree-based subdivision concentrates detail where the surface has high curvature</li>
+          <li><strong>Dual contouring</strong> &mdash; places vertices inside cells (not on edges like Marching Cubes), enabling better feature capture</li>
+        </ul>
+      </div>
+    </div>
+  `;
+}
+
 let currentCleanup: (() => void) | null = null;
 
 const menuToggle = document.getElementById("menu-toggle")!;
@@ -99,11 +139,19 @@ function renderHome(container: HTMLElement) {
         </a>
       </div>
 
+      <div style="margin-top: 32px;">
+        <a href="#/the-algorithm" class="feature-card" style="max-width: 600px; border-color: var(--accent); background: var(--accent-light);">
+          <span class="card-icon">&#128214;</span>
+          <h3>The Algorithm &mdash; Manifold Dual Contouring</h3>
+          <p>Read the original paper and learn how MDC produces 2-manifold meshes with sharp feature preservation from signed distance functions.</p>
+        </a>
+      </div>
+
       <div class="about-section">
         <h2>About This Project</h2>
         <p>
           This library implements
-          <a href="http://faculty.cs.tamu.edu/schaefer/research/dualsimp_tvcg.pdf" target="_blank">Manifold Dual Contouring</a>,
+          <a href="#/the-algorithm">Manifold Dual Contouring</a>,
           an algorithm that produces 2-manifold triangle meshes from signed distance functions while preserving
           sharp features. Originally created by Henning Meyer, now maintained and enhanced with built-in SDF
           primitives and CSG operations.
@@ -147,6 +195,11 @@ async function navigate(route: string) {
 
   if (route === "home") {
     renderHome(container);
+    return;
+  }
+
+  if (route === "the-algorithm") {
+    renderAlgorithmPage(container);
     return;
   }
 
