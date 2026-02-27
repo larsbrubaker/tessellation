@@ -5,6 +5,3 @@ demo/dist/
 demo/public/pkg/
 *.wasm
 .DS_Store
-.claude/
-.cursor/
-CLAUDE.md
