@@ -8,7 +8,11 @@ fn main() {
     let union = sdf::Union::new(s1, s2);
     let mut mdc = ManifoldDualContouring::new(&union, 0.1, 0.1);
     let mesh = mdc.tessellate().unwrap();
-    println!("  Union: {} vertices, {} faces\n", mesh.vertices.len(), mesh.faces.len());
+    println!(
+        "  Union: {} vertices, {} faces\n",
+        mesh.vertices.len(),
+        mesh.faces.len()
+    );
 
     println!("=== CSG Intersection: Sphere & Box ===");
     let sphere = sdf::Sphere::new(1.0);
@@ -16,7 +20,11 @@ fn main() {
     let intersection = sdf::Intersection::new(sphere, cube);
     let mut mdc = ManifoldDualContouring::new(&intersection, 0.1, 0.1);
     let mesh = mdc.tessellate().unwrap();
-    println!("  Intersection: {} vertices, {} faces\n", mesh.vertices.len(), mesh.faces.len());
+    println!(
+        "  Intersection: {} vertices, {} faces\n",
+        mesh.vertices.len(),
+        mesh.faces.len()
+    );
 
     println!("=== CSG Subtraction: Sphere - Cylinder ===");
     let sphere = sdf::Sphere::new(1.0);
@@ -24,5 +32,9 @@ fn main() {
     let result = sdf::Subtraction::new(sphere, hole);
     let mut mdc = ManifoldDualContouring::new(&result, 0.1, 0.1);
     let mesh = mdc.tessellate().unwrap();
-    println!("  Subtraction: {} vertices, {} faces", mesh.vertices.len(), mesh.faces.len());
+    println!(
+        "  Subtraction: {} vertices, {} faces",
+        mesh.vertices.len(),
+        mesh.faces.len()
+    );
 }

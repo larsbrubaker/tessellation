@@ -134,7 +134,15 @@ impl<S: na::RealField + Copy + Debug + From<f32>> ImplicitFunction<S> for Torus<
         let xz_len = (p.x * p.x + p.z * p.z).sqrt();
         let zero: S = From::from(0f32);
         if xz_len < From::from(1e-10f32) {
-            return na::Vector3::new(zero, if p.y >= zero { From::from(1f32) } else { From::from(-1f32) }, zero);
+            return na::Vector3::new(
+                zero,
+                if p.y >= zero {
+                    From::from(1f32)
+                } else {
+                    From::from(-1f32)
+                },
+                zero,
+            );
         }
         let center_x = p.x * self.major_radius / xz_len;
         let center_z = p.z * self.major_radius / xz_len;
@@ -315,7 +323,11 @@ where
     fn value(&self, p: &na::Point3<S>) -> S {
         let va = self.a.value(p);
         let vb = self.b.value(p);
-        if va <= vb { va } else { vb }
+        if va <= vb {
+            va
+        } else {
+            vb
+        }
     }
     fn normal(&self, p: &na::Point3<S>) -> na::Vector3<S> {
         if self.a.value(p) <= self.b.value(p) {
@@ -360,7 +372,11 @@ where
     fn value(&self, p: &na::Point3<S>) -> S {
         let va = self.a.value(p);
         let vb = self.b.value(p);
-        if va >= vb { va } else { vb }
+        if va >= vb {
+            va
+        } else {
+            vb
+        }
     }
     fn normal(&self, p: &na::Point3<S>) -> na::Vector3<S> {
         if self.a.value(p) >= self.b.value(p) {
@@ -405,7 +421,11 @@ where
     fn value(&self, p: &na::Point3<S>) -> S {
         let va = self.a.value(p);
         let neg_vb = -self.b.value(p);
-        if va >= neg_vb { va } else { neg_vb }
+        if va >= neg_vb {
+            va
+        } else {
+            neg_vb
+        }
     }
     fn normal(&self, p: &na::Point3<S>) -> na::Vector3<S> {
         let va = self.a.value(p);

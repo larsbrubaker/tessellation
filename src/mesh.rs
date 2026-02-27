@@ -5,6 +5,7 @@ use std::fmt;
 use std::fmt::Debug;
 
 #[derive(Debug, PartialEq)]
+#[allow(dead_code)]
 pub struct MeshError {
     msg: String,
 }

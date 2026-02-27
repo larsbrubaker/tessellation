@@ -46,8 +46,12 @@ pub fn offset(idx: Index, offset: Index) -> Index {
     [idx[0] + offset[0], idx[1] + offset[1], idx[2] + offset[2]]
 }
 
-pub fn neg_offset(idx: Index, offset: Index) -> Index {
-    [idx[0] - offset[0], idx[1] - offset[1], idx[2] - offset[2]]
+pub fn checked_neg_offset(idx: Index, offset: Index) -> Option<Index> {
+    Some([
+        idx[0].checked_sub(offset[0])?,
+        idx[1].checked_sub(offset[1])?,
+        idx[2].checked_sub(offset[2])?,
+    ])
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -67,7 +71,7 @@ impl VertexIndex {
         let neighbor_index = if (face & 1) == 1 {
             offset(self.index, off)
         } else {
-            neg_offset(self.index, off)
+            checked_neg_offset(self.index, off)?
         };
         Some(VertexIndex {
             edges: neighbor_edge_set,

@@ -12,3 +12,7 @@ wasm-bindgen = "0.2"
 nalgebra = "0.33"
 js-sys = "0.3"
 getrandom = { version = "0.2", features = ["js"] }
+console_error_panic_hook = "0.1"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

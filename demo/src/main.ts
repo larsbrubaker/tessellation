@@ -37,9 +37,9 @@ function renderAlgorithmPage(container: HTMLElement) {
           &#128196; Read the Paper (PDF, 2.6 MB)
         </a>
       </div>
-      <div style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden; max-width: 900px;">
+      <div style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
         <iframe src="${base}manifold-dual-contouring.pdf"
-                style="width: 100%; height: 75vh; border: none;"
+                style="width: 100%; height: 85vh; border: none;"
                 title="Manifold Dual Contouring paper"></iframe>
       </div>
       <div class="about-section">

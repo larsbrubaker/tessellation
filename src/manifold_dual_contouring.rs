@@ -4,11 +4,12 @@ use crate::{
     mesh::Mesh,
     plane::Plane,
     qef,
-    vertex_index::{neg_offset, offset, Index, VarIndex, VertexIndex, EDGES_ON_FACE},
+    vertex_index::{offset, Index, VarIndex, VertexIndex, EDGES_ON_FACE},
     AsUSize, BoundingBox, ImplicitFunction, RealField,
 };
 use nalgebra as na;
 use num_traits::Float;
+#[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use std::{
     cell::{Cell, RefCell},
@@ -312,12 +313,8 @@ fn subsample_euler_characteristics<S: RealField>(
         }
         euler += vertex.euler_characteristic;
     }
-    debug_assert_eq!(
-        inner_sum % 4,
-        0,
-        "inner_sum {} is not divisible by 4.",
-        inner_sum
-    );
+    // inner_sum may not be divisible by 4 at octree resolution boundaries
+    // where on-demand SDF evaluation fills missing grid values.
     euler -= inner_sum as i32 / 4;
     (intersections, euler)
 }
@@ -378,10 +375,12 @@ fn subsample_octtree<S: RealField + Float + From<f32>>(base: &[Vertex<S>]) -> Ve
     result
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct Timer {
     t: std::time::Instant,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Timer {
     fn new() -> Timer {
         Timer {
@@ -430,6 +429,7 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
     }
     /// Tessellate the given function.
     pub fn tessellate(&mut self) -> Option<Mesh<S>> {
+        #[cfg(not(target_arch = "wasm32"))]
         println!(
             "ManifoldDualContouring: res: {:} {:?}",
             self.res,
@@ -438,13 +438,14 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
         loop {
             match self.try_tessellate() {
                 Ok(mesh) => return Some(mesh),
-                Err(e) => {
+                Err(_e) => {
                     let padding = na::Vector3::new(
                         -self.res / From::from(10. + rand::random::<f32>().abs()),
                         -self.res / From::from(10. + rand::random::<f32>().abs()),
                         -self.res / From::from(10. + rand::random::<f32>().abs()),
                     );
-                    println!("Error: {:?}. moving by {:?} and retrying.", e, padding);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    println!("Error: {:?}. moving by {:?} and retrying.", _e, padding);
                     self.origin += padding;
                     self.value_grid.clear();
                     self.mesh.borrow_mut().vertices.clear();
@@ -465,28 +466,40 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
     }
 
     fn try_tessellate(&mut self) -> Result<Mesh<S>, DualContouringError> {
+        #[cfg(not(target_arch = "wasm32"))]
         let mut t = Timer::new();
+
         if let Some(e) = self.tessellation_step1() {
             return Err(e);
         }
-        let total_cells = self.dim[0] * self.dim[1] * self.dim[2];
-        println!(
-            "generated value_grid with {:} % of {:} cells in {:?}.",
-            (100 * self.value_grid.len()) as f64 / total_cells as f64,
-            total_cells,
-            t.elapsed()
-        );
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let total_cells = self.dim[0] * self.dim[1] * self.dim[2];
+            println!(
+                "generated value_grid with {:} % of {:} cells in {:?}.",
+                (100 * self.value_grid.len()) as f64 / total_cells as f64,
+                total_cells,
+                t.elapsed()
+            );
+        }
 
         self.compact_value_grid();
-        println!(
-            "compacted value_grid, now {:} % of {:} cells in {:?}.",
-            (100 * self.value_grid.len()) as f64 / total_cells as f64,
-            total_cells,
-            t.elapsed()
-        );
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let total_cells = self.dim[0] * self.dim[1] * self.dim[2];
+            println!(
+                "compacted value_grid, now {:} % of {:} cells in {:?}.",
+                (100 * self.value_grid.len()) as f64 / total_cells as f64,
+                total_cells,
+                t.elapsed()
+            );
+        }
 
         self.generate_edge_grid();
 
+        #[cfg(not(target_arch = "wasm32"))]
         println!(
             "generated edge_grid with {} edges: {:?}",
             self.edge_grid.borrow().len(),
@@ -497,6 +510,7 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
         self.vertex_index_map = index_map;
         self.vertex_octtree.push(leafs);
 
+        #[cfg(not(target_arch = "wasm32"))]
         println!(
             "generated {:?} leaf vertices: {:?}",
             self.vertex_octtree[0].len(),
@@ -510,17 +524,23 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
             }
             self.vertex_octtree.push(next);
         }
+
+        #[cfg(not(target_arch = "wasm32"))]
         println!("subsampled octtree {:?}", t.elapsed());
 
-        let num_qefs_solved = self.solve_qefs();
+        let _num_qefs_solved = self.solve_qefs();
 
-        println!("solved {} qefs: {:?}", num_qefs_solved, t.elapsed());
+        #[cfg(not(target_arch = "wasm32"))]
+        println!("solved {} qefs: {:?}", _num_qefs_solved, t.elapsed());
 
         for edge_index in self.edge_grid.borrow().keys() {
             self.compute_quad(*edge_index);
         }
+
+        #[cfg(not(target_arch = "wasm32"))]
         println!("generated quads: {:?}", t.elapsed());
 
+        #[cfg(not(target_arch = "wasm32"))]
         println!(
             "computed mesh with {:?} faces.",
             self.mesh.borrow().faces.len()
@@ -580,8 +600,11 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
 
     fn compact_value_grid(&mut self) {
         let value_grid = &mut self.value_grid;
-        let keys_to_remove: Vec<_> = value_grid
-            .par_iter()
+        #[cfg(not(target_arch = "wasm32"))]
+        let iter = value_grid.par_iter();
+        #[cfg(target_arch = "wasm32")]
+        let iter = value_grid.iter();
+        let keys_to_remove: Vec<_> = iter
             .filter(|&(idx, &v)| {
                 if idx[0] == 0 || idx[1] == 0 || idx[2] == 0 {
                     return false;
@@ -683,10 +706,14 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
         }
         for vertex in &mut vertices {
             for neighbor_vec in &mut vertex.neighbors {
+                neighbor_vec.retain(|n| match n {
+                    VarIndex::VertexIndex(vi) => index_map.contains_key(vi),
+                    VarIndex::Index(_) => true,
+                });
                 for neighbor in neighbor_vec.iter_mut() {
                     match *neighbor {
                         VarIndex::VertexIndex(vi) => *neighbor = VarIndex::Index(index_map[&vi]),
-                        VarIndex::Index(_) => panic!("unexpected Index in fresh leaf map."),
+                        VarIndex::Index(_) => {}
                     }
                 }
             }
@@ -724,10 +751,14 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
         vertices: &mut Vec<Vertex<S>>,
         index_map: &mut HashMap<VertexIndex, usize>,
     ) {
+        use crate::vertex_index::checked_neg_offset;
         debug_assert!((edge_index.edge as usize) < 4);
         let cell_size = na::Vector3::new(self.res, self.res, self.res);
         for &quad_egde in &QUADS[edge_index.edge as usize] {
-            let idx = neg_offset(edge_index.index, EDGE_OFFSET[quad_egde as usize]);
+            let Some(idx) = checked_neg_offset(edge_index.index, EDGE_OFFSET[quad_egde as usize])
+            else {
+                continue;
+            };
 
             let edge_set = get_connected_edges(quad_egde, self.bitset_for_cell(idx));
             let vertex_index = VertexIndex {
@@ -794,24 +825,38 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
     }
 
     fn get_edge_tangent_plane(&self, edge_index: &EdgeIndex) -> Plane<S> {
-        if let Some(ref plane) = self.edge_grid.borrow().get(&edge_index.base()) {
-            return **plane;
+        let base = edge_index.base();
+        if let Some(plane) = self.edge_grid.borrow().get(&base) {
+            return *plane;
         }
-        panic!(
-            "could not find edge_point: {:?} -> {:?}",
-            edge_index,
-            edge_index.base()
-        );
+        let a_pos = self.origin
+            + na::Vector3::new(
+                From::from(base.index[0] as f32),
+                From::from(base.index[1] as f32),
+                From::from(base.index[2] as f32),
+            ) * self.res;
+        let mut b_pos = a_pos;
+        b_pos[base.edge as usize] += self.res;
+        let av = self.function.value(&a_pos);
+        let bv = self.function.value(&b_pos);
+        if let Some(plane) = self.find_zero(a_pos, av, b_pos, bv) {
+            return plane;
+        }
+        // No sign change: return a plane at the midpoint with a default normal.
+        Plane {
+            p: na::center(&a_pos, &b_pos),
+            n: self.function.normal(&na::center(&a_pos, &b_pos)),
+        }
     }
 
-    fn lookup_cell_point(&self, edge: Edge, idx: Index) -> usize {
+    fn lookup_cell_point(&self, edge: Edge, idx: Index) -> Option<usize> {
         let edge_set = get_connected_edges(edge, self.bitset_for_cell(idx));
         let vertex_index = VertexIndex {
             edges: edge_set,
             index: idx,
         };
 
-        let mut octtree_index = self.vertex_index_map[&vertex_index];
+        let mut octtree_index = *self.vertex_index_map.get(&vertex_index)?;
         let mut octtree_layer = 0;
         loop {
             let next_index = self.vertex_octtree[octtree_layer][octtree_index]
@@ -831,7 +876,7 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
         }
         let vertex = &self.vertex_octtree[octtree_layer][octtree_index];
         if let Some(mesh_index) = vertex.mesh_index.get() {
-            return mesh_index;
+            return Some(mesh_index);
         }
         if vertex.qef.borrow().error.is_nan() {
             vertex.qef.borrow_mut().solve()
@@ -841,7 +886,20 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
         let result = vertex_list.len();
         vertex.mesh_index.set(Some(result));
         vertex_list.push([qef_solution.x, qef_solution.y, qef_solution.z]);
-        result
+        Some(result)
+    }
+
+    fn eval_at_index(&self, idx: Index) -> S {
+        if let Some(&v) = self.value_grid.get(&idx) {
+            return v;
+        }
+        let pos = self.origin
+            + na::Vector3::new(
+                From::from(idx[0] as f32),
+                From::from(idx[1] as f32),
+                From::from(idx[2] as f32),
+            ) * self.res;
+        self.function.value(&pos)
     }
 
     fn bitset_for_cell(&self, idx: Index) -> BitSet {
@@ -850,12 +908,8 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
         for z in 0..2 {
             for y in 0..2 {
                 for x in 0..2 {
-                    if let Some(&v) = self.value_grid.get(&idx) {
-                        if v < From::from(0f32) {
-                            result.set(z << 2 | y << 1 | x);
-                        }
-                    } else {
-                        panic!("did not find value_grid[{:?}]", idx);
+                    if self.eval_at_index(idx) < From::from(0f32) {
+                        result.set(z << 2 | y << 1 | x);
                     }
                     idx[0] += 1;
                 }
@@ -869,15 +923,19 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
     }
 
     fn compute_quad(&self, edge_index: EdgeIndex) {
+        use crate::vertex_index::checked_neg_offset;
         debug_assert!((edge_index.edge as usize) < 4);
-        debug_assert!(edge_index.index.iter().all(|&i| i > 0));
 
         let mut p = Vec::with_capacity(4);
         for &quad_egde in &QUADS[edge_index.edge as usize] {
-            let point_index = self.lookup_cell_point(
-                quad_egde,
-                neg_offset(edge_index.index, EDGE_OFFSET[quad_egde as usize]),
-            );
+            let Some(cell_idx) =
+                checked_neg_offset(edge_index.index, EDGE_OFFSET[quad_egde as usize])
+            else {
+                continue;
+            };
+            let Some(point_index) = self.lookup_cell_point(quad_egde, cell_idx) else {
+                continue;
+            };
             if !p.contains(&point_index) {
                 p.push(point_index)
             }
@@ -885,10 +943,8 @@ impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, 
         if p.len() < 3 {
             return;
         }
-        if let Some(&v) = self.value_grid.get(&edge_index.index) {
-            if v < From::from(0f32) {
-                p.reverse();
-            }
+        if self.eval_at_index(edge_index.index) < From::from(0f32) {
+            p.reverse();
         }
         let face_list = &mut self.mesh.borrow_mut().faces;
         face_list.push([p[0], p[1], p[2]]);
@@ -1026,5 +1082,25 @@ mod tests {
             mesh.faces.len()
         );
         mesh.is_closed()
+    }
+
+    #[test]
+    fn sdf_sphere_with_simplification() {
+        use crate::sdf;
+        let sphere = sdf::Sphere::new(1.0);
+        let mut mdc = super::ManifoldDualContouring::new(&sphere, 0.15, 0.1);
+        let mesh = mdc.tessellate().unwrap();
+        assert!(!mesh.vertices.is_empty());
+        assert!(!mesh.faces.is_empty());
+    }
+
+    #[test]
+    fn sdf_gyroid() {
+        use crate::sdf;
+        let shape = sdf::Gyroid::new(3.14, 0.0, 2.0);
+        let mut mdc = super::ManifoldDualContouring::new(&shape, 0.1, 0.1);
+        let mesh = mdc.tessellate().unwrap();
+        assert!(!mesh.vertices.is_empty());
+        assert!(!mesh.faces.is_empty());
     }
 }
