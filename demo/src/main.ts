@@ -18,38 +18,26 @@ const demoModules: Record<string, () => Promise<{ default: DemoInit }>> = {
 function renderAlgorithmPage(container: HTMLElement) {
   const base = import.meta.env.BASE_URL;
   container.innerHTML = `
-    <div class="home-page">
-      <h1 style="font-size: 28px; font-weight: 800; margin-bottom: 8px;">The Algorithm</h1>
-      <p style="color: var(--text-secondary); margin-bottom: 24px; max-width: 700px; line-height: 1.7;">
-        This library implements <strong>Manifold Dual Contouring</strong>, described in the paper
-        <em>"Manifold Dual Contouring"</em> by Scott Schaefer, Tao Ju, and Joe Warren (IEEE TVCG 2007).
-        The algorithm converts signed distance functions into 2-manifold triangle meshes while preserving
-        sharp features &mdash; producing clean, watertight geometry suitable for 3D printing and simulation.
-      </p>
-      <div style="margin-bottom: 32px;">
-        <a href="${base}manifold-dual-contouring.pdf" target="_blank"
-           style="display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px;
-                  background: var(--accent); color: white; border-radius: 6px;
-                  text-decoration: none; font-weight: 600; font-size: 14px;
-                  transition: background 150ms ease;"
-           onmouseover="this.style.background='var(--accent-hover)'"
-           onmouseout="this.style.background='var(--accent)'">
-          &#128196; Read the Paper (PDF, 2.6 MB)
-        </a>
+    <div class="algorithm-page">
+      <div class="algorithm-header">
+        <div class="algorithm-header-text">
+          <h1 class="algorithm-title">The Algorithm</h1>
+          <p class="algorithm-desc">
+            This library implements <strong>Manifold Dual Contouring</strong>, described in the paper
+            <em>"Manifold Dual Contouring"</em> by Scott Schaefer, Tao Ju, and Joe Warren (IEEE TVCG 2007).
+            The algorithm converts signed distance functions into 2-manifold triangle meshes while preserving
+            sharp features &mdash; producing clean, watertight geometry suitable for 3D printing and simulation.
+          </p>
+        </div>
+        <div class="algorithm-header-action">
+          <a href="${base}manifold-dual-contouring.pdf" target="_blank" class="algorithm-pdf-link">
+            &#128196; Read the Paper (PDF, 2.6 MB)
+          </a>
+        </div>
       </div>
-      <div style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
+      <div class="algorithm-pdf">
         <iframe src="${base}manifold-dual-contouring.pdf"
-                style="width: 100%; height: 85vh; border: none;"
                 title="Manifold Dual Contouring paper"></iframe>
-      </div>
-      <div class="about-section">
-        <h2>Key Properties</h2>
-        <ul style="color: var(--text-secondary); line-height: 1.8; padding-left: 20px; max-width: 700px;">
-          <li><strong>2-Manifold output</strong> &mdash; every edge is shared by exactly two triangles, producing watertight meshes</li>
-          <li><strong>Sharp feature preservation</strong> &mdash; uses QEF (Quadratic Error Function) minimization to place vertices on sharp edges and corners</li>
-          <li><strong>Adaptive resolution</strong> &mdash; octree-based subdivision concentrates detail where the surface has high curvature</li>
-          <li><strong>Dual contouring</strong> &mdash; places vertices inside cells (not on edges like Marching Cubes), enabling better feature capture</li>
-        </ul>
       </div>
     </div>
   `;
