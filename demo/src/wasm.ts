@@ -48,7 +48,8 @@ let wasmModule: {
 
 export async function initWasm(): Promise<void> {
   if (wasmModule) return;
-  const pkg = await import(/* @vite-ignore */ "/pkg/tessellation_wasm.js");
+  const base = import.meta.env.BASE_URL;
+  const pkg = await import(/* @vite-ignore */ `${base}pkg/tessellation_wasm.js`);
   await pkg.default();
   wasmModule = pkg as typeof wasmModule;
 }
