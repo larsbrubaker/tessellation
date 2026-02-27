@@ -2,9 +2,16 @@ use nalgebra as na;
 use tessellation::{sdf, ManifoldDualContouring, Mesh};
 use wasm_bindgen::prelude::*;
 
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console)]
+    fn log(s: &str);
+}
+
 #[wasm_bindgen(start)]
 pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
+    log("tessellation-wasm: panic hook installed");
 }
 
 fn mesh_to_flat_arrays(mesh: &Mesh<f64>) -> (Vec<f32>, Vec<u32>, Vec<f32>) {
@@ -41,11 +48,7 @@ fn pack_result(mesh: &Mesh<f64>, elapsed_ms: f64) -> Vec<f32> {
     let vert_count = (vertices.len() / 3) as f32;
     let face_count = (indices.len() / 3) as f32;
 
-    let mut result = Vec::new();
-    result.push(vert_count);
-    result.push(face_count);
-    result.push(elapsed_ms as f32);
-    result.push(vertices.len() as f32);
+    let mut result = vec![vert_count, face_count, elapsed_ms as f32, vertices.len() as f32];
     result.extend_from_slice(&vertices);
     result.push(indices.len() as f32);
     for idx in &indices {
@@ -58,10 +61,22 @@ fn pack_result(mesh: &Mesh<f64>, elapsed_ms: f64) -> Vec<f32> {
 
 #[wasm_bindgen]
 pub fn tessellate_sphere(radius: f64, cell_size: f64) -> Vec<f32> {
+    log(&format!(
+        "tessellate_sphere: radius={}, cell_size={}",
+        radius, cell_size
+    ));
     let start = web_time();
+    log("tessellate_sphere: creating SDF");
     let sphere = sdf::Sphere::new(radius);
+    log("tessellate_sphere: creating MDC");
     let mut mdc = ManifoldDualContouring::new(&sphere, cell_size, 0.1);
+    log("tessellate_sphere: starting tessellation");
     let mesh = mdc.tessellate().unwrap();
+    log(&format!(
+        "tessellate_sphere: done, {} verts, {} faces",
+        mesh.vertices.len(),
+        mesh.faces.len()
+    ));
     let elapsed = web_time() - start;
     pack_result(&mesh, elapsed)
 }
