@@ -1,5 +1,5 @@
 /**
- * Resolution demo: quality vs performance tradeoff.
+ * Resolution demo: quality vs. performance tradeoff.
  * @license Apache-2.0 OR MIT
  * @copyright 2025
  */
@@ -7,71 +7,80 @@
 import { DemoRenderer } from "../renderer";
 import {
   createSlider,
-  createToggle,
-  createStats,
+  createCheckbox,
+  createSeparator,
+  createReadout,
+  updateReadout,
+  createInfoBox,
 } from "../controls";
 import { initWasm, parseMeshResult, tessellateSphere } from "../wasm";
 
-const EXPLANATION =
-  "Smaller cell size = higher resolution and more vertices/faces, but slower tessellation. " +
-  "Larger cell size = faster generation with a coarser mesh.";
-
-export default async function init(container: HTMLElement): Promise<{ dispose: () => void }> {
+export default async function init(
+  container: HTMLElement
+): Promise<{ dispose: () => void }> {
   await initWasm();
 
-  const viewport = document.createElement("div");
-  viewport.className = "viewport";
-  const controlsPanel = document.createElement("div");
-  controlsPanel.className = "controls-panel";
+  container.innerHTML = `
+    <div class="demo-page">
+      <div class="demo-header">
+        <h2>Resolution &amp; Quality</h2>
+        <p>Explore the quality vs. performance tradeoff by adjusting cell size.</p>
+      </div>
+      <div class="demo-body">
+        <div class="demo-canvas-area" id="demo-viewport">
+          <div class="canvas-hint">Drag to rotate &middot; Scroll to zoom</div>
+        </div>
+        <div class="demo-controls" id="demo-controls"></div>
+      </div>
+    </div>
+  `;
 
-  container.appendChild(viewport);
-  container.appendChild(controlsPanel);
-
+  const viewport = document.getElementById("demo-viewport")!;
+  const controlsPanel = document.getElementById("demo-controls")!;
   const renderer = new DemoRenderer(viewport);
 
   let cellSize = 0.15;
-  let wireframe = false;
 
-  const stats = createStats();
+  const readout = createReadout();
 
-  const cellSizeSlider = createSlider({
-    label: "Cell size (resolution)",
-    min: 0.02,
-    max: 0.5,
-    step: 0.01,
-    value: cellSize,
-    onChange: (v) => {
+  const cellSizeSlider = createSlider(
+    "Cell Size",
+    0.02,
+    0.5,
+    cellSize,
+    0.01,
+    (v) => {
       cellSize = v;
       update();
-    },
-  });
-  cellSizeSlider.classList.add("control-row-prominent");
+    }
+  );
 
-  const wireframeToggle = createToggle({
-    label: "Wireframe",
-    checked: wireframe,
-    onChange: (v) => {
-      wireframe = v;
-      renderer.setWireframe(v);
-    },
+  const wireframeToggle = createCheckbox("Wireframe", false, (v) => {
+    renderer.setWireframe(v);
   });
 
-  const explanation = document.createElement("p");
-  explanation.className = "demo-explanation";
-  explanation.textContent = EXPLANATION;
+  const infoBox = createInfoBox(
+    "Smaller cell size = higher resolution and more vertices/faces, but slower tessellation. " +
+      "Larger cell size = faster generation with a coarser mesh."
+  );
 
   function update(): void {
     const data = tessellateSphere(1.0, cellSize);
     const result = parseMeshResult(data);
-    stats.update(result.vertCount, result.faceCount, result.elapsedMs);
+    updateReadout(readout, [
+      { label: "Vertices", value: result.vertCount.toLocaleString() },
+      { label: "Faces", value: result.faceCount.toLocaleString() },
+      { label: "Time", value: `${result.elapsedMs.toFixed(1)} ms` },
+    ]);
     renderer.updateMesh(result.vertices, result.indices, result.normals);
   }
 
   controlsPanel.append(
+    infoBox,
     cellSizeSlider,
     wireframeToggle,
-    stats.element,
-    explanation
+    createSeparator(),
+    readout
   );
   update();
 

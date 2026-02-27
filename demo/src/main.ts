@@ -7,139 +7,169 @@
 import "./main.css";
 import { initWasm } from "./wasm";
 
-const routes = [
-  { hash: "", name: "Home", id: "home" },
-  { hash: "basic-shapes", name: "Basic Shapes", id: "basic-shapes" },
-  { hash: "csg-operations", name: "CSG Operations", id: "csg-operations" },
-  { hash: "resolution", name: "Resolution", id: "resolution" },
-  { hash: "custom-functions", name: "Custom Functions", id: "custom-functions" },
-];
+type DemoInit = (container: HTMLElement) => Promise<{ dispose?: () => void } | void>;
+const demoModules: Record<string, () => Promise<{ default: DemoInit }>> = {
+  "basic-shapes": () => import("./demos/basic-shapes"),
+  "csg-operations": () => import("./demos/csg-operations"),
+  "resolution": () => import("./demos/resolution"),
+  "custom-functions": () => import("./demos/custom-functions"),
+};
 
+let currentCleanup: (() => void) | null = null;
+
+const menuToggle = document.getElementById("menu-toggle")!;
+const sidebar = document.getElementById("sidebar")!;
+const sidebarOverlay = document.getElementById("sidebar-overlay")!;
+
+function openSidebar() {
+  sidebar.classList.add("open");
+  menuToggle.classList.add("open");
+  sidebarOverlay.classList.add("visible");
+}
+
+function closeSidebar() {
+  sidebar.classList.remove("open");
+  menuToggle.classList.remove("open");
+  sidebarOverlay.classList.remove("visible");
+}
+
+menuToggle.addEventListener("click", () => {
+  if (sidebar.classList.contains("open")) {
+    closeSidebar();
+  } else {
+    openSidebar();
+  }
+});
+
+sidebarOverlay.addEventListener("click", closeSidebar);
+
+document.querySelectorAll(".nav-link").forEach((link) => {
+  link.addEventListener("click", closeSidebar);
+});
 
 function getRoute(): string {
-  const hash = window.location.hash.slice(1).replace(/^\/?/, "") || "";
-  return hash;
+  const hash = window.location.hash.slice(2) || "";
+  return hash || "home";
 }
 
-function renderSidebar(activeRoute: string): void {
-  const sidebar = document.getElementById("sidebar");
-  if (!sidebar) return;
-
-  sidebar.innerHTML = `
-    <h2 style="padding: 0 1rem; margin: 0 0 0.5rem; font-size: 1rem;">Tessellation</h2>
-    ${routes
-      .map(
-        (r) =>
-          `<a href="#/${r.hash}" class="${r.hash === activeRoute ? "active" : ""}">${r.name}</a>`
-      )
-      .join("")}
-  `;
+function updateNav(route: string) {
+  document.querySelectorAll(".nav-link").forEach((el) => {
+    const r = (el as HTMLElement).dataset.route;
+    el.classList.toggle("active", r === route);
+  });
 }
 
-function renderHome(): void {
-  const content = document.getElementById("content");
-  if (!content) return;
+function renderHome(container: HTMLElement) {
+  container.innerHTML = `
+    <div class="home-page">
+      <div class="github-badge">
+        <a href="https://github.com/larsbrubaker/tessellation" target="_blank" class="github-badge-link">
+          <svg height="20" viewBox="0 0 16 16" width="20" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span>larsbrubaker/tessellation</span>
+        </a>
+      </div>
+      <div class="hero">
+        <h1>Tessellation <span>for Rust</span></h1>
+        <p>
+          A 3D tessellation library implementing Manifold Dual Contouring with sharp feature preservation.
+          Explore interactive demos showcasing SDF primitives, CSG operations,
+          and mathematical surfaces &mdash; all running in your browser via WebAssembly.
+        </p>
+      </div>
+      <div class="feature-grid">
+        <a href="#/basic-shapes" class="feature-card">
+          <span class="card-icon">&#9679;</span>
+          <h3>Basic Shapes</h3>
+          <p>Tessellate spheres, rounded boxes, and tori with adjustable parameters and resolution control.</p>
+        </a>
+        <a href="#/csg-operations" class="feature-card">
+          <span class="card-icon">&#9645;</span>
+          <h3>CSG Operations</h3>
+          <p>Combine shapes with Union, Intersection, and Subtraction &mdash; constructive solid geometry in action.</p>
+        </a>
+        <a href="#/resolution" class="feature-card">
+          <span class="card-icon">&#9638;</span>
+          <h3>Resolution &amp; Quality</h3>
+          <p>Explore the quality vs. performance tradeoff by adjusting cell size and viewing real-time mesh stats.</p>
+        </a>
+        <a href="#/custom-functions" class="feature-card">
+          <span class="card-icon">&#8734;</span>
+          <h3>Mathematical Surfaces</h3>
+          <p>Tessellate gyroid, Schwarz P, and other implicit surfaces defined by mathematical formulas.</p>
+        </a>
+      </div>
 
-  content.innerHTML = `
-    <div class="content" style="flex-direction: column;">
-      <h1 style="margin: 0 0 1rem;">Tessellation — Interactive 3D Demos</h1>
-      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem;">
-        ${routes
-          .filter((r) => r.hash)
-          .map(
-            (r) => `
-          <a href="#/${r.hash}" style="
-            display: block;
-            padding: 1.5rem;
-            background: var(--bg-panel);
-            border-radius: 8px;
-            color: var(--text);
-            text-decoration: none;
-            border: 1px solid var(--border);
-            transition: border-color 0.15s;
-          " onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-            <strong>${r.name}</strong>
-          </a>
-        `
-          )
-          .join("")}
+      <div class="about-section">
+        <h2>About This Project</h2>
+        <p>
+          This library implements
+          <a href="http://faculty.cs.tamu.edu/schaefer/research/dualsimp_tvcg.pdf" target="_blank">Manifold Dual Contouring</a>,
+          an algorithm that produces 2-manifold triangle meshes from signed distance functions while preserving
+          sharp features. Originally created by Henning Meyer, now maintained and enhanced with built-in SDF
+          primitives and CSG operations.
+        </p>
+        <p style="margin-top: 12px">
+          Maintained by <strong>Lars Brubaker</strong>, sponsored by
+          <a href="https://www.matterhackers.com" target="_blank">MatterHackers</a>.
+        </p>
+        <div class="stats-row">
+          <div class="stat">
+            <div class="stat-value">6</div>
+            <div class="stat-label">SDF Primitives</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">4</div>
+            <div class="stat-label">CSG Operations</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">17</div>
+            <div class="stat-label">Tests Passing</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">2-Manifold</div>
+            <div class="stat-label">Output Meshes</div>
+          </div>
+        </div>
       </div>
     </div>
   `;
 }
 
-let currentDispose: (() => void) | null = null;
+async function navigate(route: string) {
+  const container = document.getElementById("main-content")!;
 
-async function loadAndRunDemo(
-  route: string,
-  content: HTMLElement
-): Promise<void> {
-  content.innerHTML = "";
-  content.classList.add("demo-content");
-
-  currentDispose?.();
-  currentDispose = null;
-
-  const demoModules: Record<
-    string,
-    () => Promise<{
-      default: (c: HTMLElement) => Promise<{ dispose?: () => void } | void>;
-    }>
-  > = {
-    "basic-shapes": () => import("./demos/basic-shapes"),
-    "csg-operations": () => import("./demos/csg-operations"),
-    "resolution": () => import("./demos/resolution"),
-    "custom-functions": () => import("./demos/custom-functions"),
-  };
-
-  try {
-    const loader = demoModules[route];
-    const mod = loader ? await loader() : null;
-    if (mod?.default) {
-      const result = await mod.default(content);
-      if (result?.dispose) currentDispose = result.dispose;
-    }
-  } catch (e) {
-    content.innerHTML = `<p style="color: #e88;">Failed to load demo: ${e}</p>`;
+  if (currentCleanup) {
+    currentCleanup();
+    currentCleanup = null;
   }
-}
 
-async function router(): Promise<void> {
-  const route = getRoute();
-  renderSidebar(route);
+  updateNav(route);
 
-  const content = document.getElementById("content");
-  if (!content) return;
-
-  if (!route || route === "home") {
-    currentDispose?.();
-    currentDispose = null;
-    content.classList.remove("demo-content");
-    renderHome();
+  if (route === "home") {
+    renderHome(container);
     return;
   }
 
-  content.innerHTML = '<p style="padding: 1rem;">Loading...</p>';
-  await loadAndRunDemo(route, content);
+  const loader = demoModules[route];
+  if (!loader) {
+    container.innerHTML = `<div class="home-page"><h2>Page not found</h2><p>Unknown route: ${route}</p></div>`;
+    return;
+  }
+
+  container.innerHTML = `<div class="home-page" style="display:flex;align-items:center;justify-content:center;height:80vh;"><p style="color:var(--text-muted)">Loading demo...</p></div>`;
+
+  try {
+    await initWasm();
+    const mod = await loader();
+    container.innerHTML = "";
+    const result = await mod.default(container);
+    if (result?.dispose) currentCleanup = result.dispose;
+  } catch (e) {
+    console.error("Failed to load demo:", e);
+    container.innerHTML = `<div class="home-page"><h2>Error loading demo</h2><pre style="color:#eb4444">${e}</pre></div>`;
+  }
 }
 
-window.addEventListener("hashchange", router);
+window.addEventListener("hashchange", () => navigate(getRoute()));
 
-async function main(): Promise<void> {
-  document.title = "Tessellation — Interactive 3D Demos";
-
-  const app = document.getElementById("app");
-  if (!app) return;
-
-  app.innerHTML = `
-    <aside id="sidebar" class="sidebar"></aside>
-    <main class="main">
-      <div id="content" class="content"></div>
-    </main>
-  `;
-
-  await initWasm();
-  await router();
-}
-
-main();
+navigate(getRoute());

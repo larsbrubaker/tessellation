@@ -1,12 +1,51 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tessellation — Interactive 3D Demos</title>
+  <link rel="stylesheet" href="./src/main.css">
 </head>
 <body>
-  <div id="app"></div>
+  <button id="menu-toggle" class="menu-toggle" aria-label="Toggle navigation">
+    <span></span><span></span><span></span>
+  </button>
+  <div id="sidebar-overlay" class="sidebar-overlay"></div>
+
+  <nav id="sidebar">
+    <div class="sidebar-header">
+      <h1 class="logo">Tessellation<span class="logo-accent">.rs</span></h1>
+      <p class="tagline">Interactive 3D Tessellation Demos</p>
+    </div>
+    <ul class="nav-list">
+      <li><a href="#/" class="nav-link active" data-route="home">
+        <span class="nav-icon">&#9670;</span> Home
+      </a></li>
+      <li class="nav-section">Demos</li>
+      <li><a href="#/basic-shapes" class="nav-link" data-route="basic-shapes">
+        <span class="nav-icon">&#9679;</span> Basic Shapes
+      </a></li>
+      <li><a href="#/csg-operations" class="nav-link" data-route="csg-operations">
+        <span class="nav-icon">&#9645;</span> CSG Operations
+      </a></li>
+      <li><a href="#/resolution" class="nav-link" data-route="resolution">
+        <span class="nav-icon">&#9638;</span> Resolution
+      </a></li>
+      <li><a href="#/custom-functions" class="nav-link" data-route="custom-functions">
+        <span class="nav-icon">&#8734;</span> Custom Functions
+      </a></li>
+    </ul>
+    <div class="sidebar-footer">
+      <p><a href="https://github.com/larsbrubaker/tessellation" target="_blank">Source on GitHub</a></p>
+      <p>Manifold Dual Contouring</p>
+      <p class="license">Apache-2.0 / MIT License</p>
+    </div>
+  </nav>
+
+  <main id="main-content">
+    <!-- Content dynamically injected by router -->
+  </main>
+
   <script type="module" src="./src/main.ts"></script>
 </body>
 </html>

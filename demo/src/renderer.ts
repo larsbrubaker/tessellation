@@ -20,6 +20,8 @@ export class DemoRenderer {
   constructor(container: HTMLElement) {
     this.container = container;
     this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0xf8f9fb);
+
     this.camera = new THREE.PerspectiveCamera(
       60,
       container.clientWidth / container.clientHeight,
@@ -37,10 +39,17 @@ export class DemoRenderer {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
 
-    this.scene.add(new THREE.AmbientLight(0x404040));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+    this.scene.add(ambient);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
     dirLight.position.set(5, 10, 7.5);
     this.scene.add(dirLight);
+    const backLight = new THREE.DirectionalLight(0xffffff, 0.3);
+    backLight.position.set(-5, -3, -5);
+    this.scene.add(backLight);
+
+    const gridHelper = new THREE.GridHelper(6, 12, 0xe2e5ea, 0xeef0f3);
+    this.scene.add(gridHelper);
 
     window.addEventListener("resize", this.boundResize);
     this.animate();
@@ -49,6 +58,7 @@ export class DemoRenderer {
   private handleResize(): void {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
+    if (w === 0 || h === 0) return;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
@@ -62,6 +72,7 @@ export class DemoRenderer {
     if (this.mesh) {
       this.scene.remove(this.mesh);
       this.mesh.geometry.dispose();
+      (this.mesh.material as THREE.Material).dispose();
     }
 
     const faceCount = indices.length / 3;
@@ -70,20 +81,31 @@ export class DemoRenderer {
     for (let i = 0; i < faceCount; i++) {
       for (let j = 0; j < 3; j++) {
         const vi = indices[i * 3 + j] * 3;
-        posExpanded.set(vertices.subarray(vi, vi + 3), i * 9 + j * 3);
-        normExpanded.set(normals.subarray(i * 9 + j * 3, i * 9 + j * 3 + 3), i * 9 + j * 3);
+        const outIdx = i * 9 + j * 3;
+        posExpanded.set(vertices.subarray(vi, vi + 3), outIdx);
+        normExpanded.set(
+          normals.subarray(outIdx, outIdx + 3),
+          outIdx
+        );
       }
     }
 
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(posExpanded, 3));
-    geometry.setAttribute("normal", new THREE.BufferAttribute(normExpanded, 3));
+    geometry.setAttribute(
+      "position",
+      new THREE.BufferAttribute(posExpanded, 3)
+    );
+    geometry.setAttribute(
+      "normal",
+      new THREE.BufferAttribute(normExpanded, 3)
+    );
     geometry.computeBoundingSphere();
 
     const material = new THREE.MeshPhongMaterial({
-      color: 0x4488cc,
+      color: 0x2563eb,
       flatShading: true,
       wireframe: this.wireframe,
+      side: THREE.DoubleSide,
     });
 
     this.mesh = new THREE.Mesh(geometry, material);

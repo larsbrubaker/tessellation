@@ -7,9 +7,11 @@
 import { DemoRenderer } from "../renderer";
 import {
   createSlider,
-  createSelect,
-  createToggle,
-  createStats,
+  createDropdown,
+  createCheckbox,
+  createSeparator,
+  createReadout,
+  updateReadout,
   createCodePanel,
 } from "../controls";
 import {
@@ -20,93 +22,98 @@ import {
   tessellateSphereHole,
 } from "../wasm";
 
-const GYROID_CODE = `// Gyroid - triply periodic minimal surface
-// implicit: sin(x)*cos(y) + sin(y)*cos(z) + sin(z)*cos(x) = 0
-// Scale controls frequency, bounds limits domain
+const GYROID_CODE = `// Gyroid — triply periodic minimal surface
+fn value(&self, p: &Point3<f64>) -> f64 {
+    let s = self.scale;
+    (p.x * s).sin() * (p.y * s).cos()
+      + (p.y * s).sin() * (p.z * s).cos()
+      + (p.z * s).sin() * (p.x * s).cos()
+}
 
-tessellate_gyroid(scale, cell_size, bounds)`;
+// WASM: tessellate_gyroid(scale, cell_size, bounds)`;
 
-const SCHWARTZ_P_CODE = `// Schwarz P - minimal surface
-// implicit: cos(x) + cos(y) + cos(z) = 0
-// Scale controls cell size, bounds limits domain
+const SCHWARTZ_P_CODE = `// Schwarz P — minimal surface
+fn value(&self, p: &Point3<f64>) -> f64 {
+    let s = self.scale;
+    (p.x * s).cos()
+      + (p.y * s).cos()
+      + (p.z * s).cos()
+}
 
-tessellate_schwartz_p(scale, cell_size, bounds)`;
+// WASM: tessellate_schwartz_p(scale, cell_size, bounds)`;
 
 const SPHERE_HOLE_CODE = `// Sphere with cylindrical hole (CSG subtraction)
-// sphere(1.0) - cylinder(0.4, 2.0)
-// Demonstrates sharp feature handling
+let sphere = Sphere::new(1.0);
+let cylinder = Cylinder::new(0.4, 2.0);
+let result = Subtraction::new(sphere, cylinder);
 
-tessellate_sphere_hole(cell_size)`;
+// WASM: tessellate_sphere_hole(cell_size)`;
 
-export default async function init(container: HTMLElement): Promise<{ dispose: () => void }> {
+export default async function init(
+  container: HTMLElement
+): Promise<{ dispose: () => void }> {
   await initWasm();
 
-  const viewport = document.createElement("div");
-  viewport.className = "viewport";
-  const controlsPanel = document.createElement("div");
-  controlsPanel.className = "controls-panel";
+  container.innerHTML = `
+    <div class="demo-page">
+      <div class="demo-header">
+        <h2>Mathematical Surfaces</h2>
+        <p>Tessellate implicit surfaces defined by mathematical formulas.</p>
+      </div>
+      <div class="demo-body">
+        <div class="demo-canvas-area" id="demo-viewport">
+          <div class="canvas-hint">Drag to rotate &middot; Scroll to zoom</div>
+        </div>
+        <div class="demo-controls" id="demo-controls"></div>
+      </div>
+    </div>
+  `;
 
-  container.appendChild(viewport);
-  container.appendChild(controlsPanel);
-
+  const viewport = document.getElementById("demo-viewport")!;
+  const controlsPanel = document.getElementById("demo-controls")!;
   const renderer = new DemoRenderer(viewport);
 
   let surface: "gyroid" | "schwartz" | "sphere_hole" = "gyroid";
   let scale = 3.14;
   let cellSize = 0.1;
   let bounds = 2.0;
-  let wireframe = false;
 
-  const stats = createStats();
+  const readout = createReadout();
   const codePanel = createCodePanel(GYROID_CODE);
 
-  const surfaceSelect = createSelect({
-    label: "Surface",
-    options: [
+  const surfaceSelect = createDropdown(
+    "Surface",
+    [
       { value: "gyroid", text: "Gyroid" },
       { value: "schwartz", text: "Schwarz P" },
       { value: "sphere_hole", text: "Sphere + Hole" },
     ],
-    value: "gyroid",
-    onChange: (v) => {
-      surface = v as "gyroid" | "schwartz" | "sphere_hole";
+    "gyroid",
+    (v) => {
+      surface = v as typeof surface;
       updateControlVisibility();
       updateCodePanel();
       update();
-    },
+    }
+  );
+
+  const scaleSlider = createSlider("Scale", 1.0, 10.0, scale, 0.01, (v) => {
+    scale = v;
+    update();
   });
 
-  const scaleSlider = createSlider({
-    label: "Scale",
-    min: 1.0,
-    max: 10.0,
-    step: 0.01,
-    value: scale,
-    onChange: (v) => { scale = v; update(); },
+  const boundsSlider = createSlider("Bounds", 1.0, 4.0, bounds, 0.1, (v) => {
+    bounds = v;
+    update();
   });
 
-  const boundsSlider = createSlider({
-    label: "Bounds",
-    min: 1.0,
-    max: 4.0,
-    step: 0.1,
-    value: bounds,
-    onChange: (v) => { bounds = v; update(); },
+  const resolutionSlider = createSlider("Cell Size", 0.05, 0.3, cellSize, 0.01, (v) => {
+    cellSize = v;
+    update();
   });
 
-  const resolutionSlider = createSlider({
-    label: "Resolution (cell size)",
-    min: 0.05,
-    max: 0.3,
-    step: 0.01,
-    value: cellSize,
-    onChange: (v) => { cellSize = v; update(); },
-  });
-
-  const wireframeToggle = createToggle({
-    label: "Wireframe",
-    checked: wireframe,
-    onChange: (v) => { wireframe = v; renderer.setWireframe(v); },
+  const wireframeToggle = createCheckbox("Wireframe", false, (v) => {
+    renderer.setWireframe(v);
   });
 
   function updateControlVisibility(): void {
@@ -131,7 +138,11 @@ export default async function init(container: HTMLElement): Promise<{ dispose: (
       data = tessellateSphereHole(cellSize);
     }
     const result = parseMeshResult(data);
-    stats.update(result.vertCount, result.faceCount, result.elapsedMs);
+    updateReadout(readout, [
+      { label: "Vertices", value: result.vertCount.toLocaleString() },
+      { label: "Faces", value: result.faceCount.toLocaleString() },
+      { label: "Time", value: `${result.elapsedMs.toFixed(1)} ms` },
+    ]);
     renderer.updateMesh(result.vertices, result.indices, result.normals);
   }
 
@@ -139,13 +150,14 @@ export default async function init(container: HTMLElement): Promise<{ dispose: (
     surfaceSelect,
     scaleSlider,
     boundsSlider,
+    createSeparator(),
     resolutionSlider,
     wireframeToggle,
-    stats.element,
+    createSeparator(),
+    readout,
     codePanel.element
   );
   updateControlVisibility();
-  updateCodePanel();
   update();
 
   return { dispose: () => renderer.dispose() };

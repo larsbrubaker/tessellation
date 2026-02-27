@@ -1,111 +1,117 @@
 /**
- * UI control components for tessellation demos.
+ * Reusable UI control builders — matching clipper2-rust styling.
  * @license Apache-2.0 OR MIT
  * @copyright 2025
  */
 
-export interface SliderOptions {
-  label: string;
-  min: number;
-  max: number;
-  step?: number;
-  value: number;
-  onChange: (value: number) => void;
-}
+export function createSlider(
+  label: string,
+  min: number,
+  max: number,
+  value: number,
+  step: number,
+  onChange: (val: number) => void
+): HTMLElement {
+  const group = document.createElement("div");
+  group.className = "control-group";
+  const lbl = document.createElement("label");
+  const labelText = document.createTextNode(label);
+  const valSpan = document.createElement("span");
+  valSpan.className = "slider-value";
+  valSpan.textContent = String(value);
+  lbl.appendChild(labelText);
+  lbl.appendChild(valSpan);
 
-export function createSlider(options: SliderOptions): HTMLElement {
-  const wrapper = document.createElement("div");
-  wrapper.className = "control-group";
-  const label = document.createElement("label");
-  label.textContent = `${options.label}: `;
   const input = document.createElement("input");
   input.type = "range";
-  input.min = String(options.min);
-  input.max = String(options.max);
-  input.step = String(options.step ?? (options.max - options.min) / 100);
-  input.value = String(options.value);
-  const valueSpan = document.createElement("span");
-  valueSpan.className = "control-value";
-  valueSpan.textContent = String(options.value);
-
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(value);
   input.addEventListener("input", () => {
-    const val = Number(input.value);
-    valueSpan.textContent = String(val);
-    options.onChange(val);
+    const v = parseFloat(input.value);
+    valSpan.textContent = String(v);
+    onChange(v);
   });
 
-  wrapper.append(label, input, valueSpan);
-  return wrapper;
+  group.appendChild(lbl);
+  group.appendChild(input);
+  return group;
 }
 
-export interface SelectOptions {
-  label: string;
-  options: { value: string; text: string }[];
-  value: string;
-  onChange: (value: string) => void;
-}
+export function createDropdown(
+  label: string,
+  options: { value: string; text: string }[],
+  selectedValue: string,
+  onChange: (val: string) => void
+): HTMLElement {
+  const group = document.createElement("div");
+  group.className = "control-group";
+  const lbl = document.createElement("label");
+  lbl.textContent = label;
 
-export function createSelect(options: SelectOptions): HTMLElement {
-  const wrapper = document.createElement("div");
-  wrapper.className = "control-group";
-  const label = document.createElement("label");
-  label.textContent = `${options.label}: `;
   const select = document.createElement("select");
-  for (const opt of options.options) {
-    const option = document.createElement("option");
-    option.value = opt.value;
-    option.textContent = opt.text;
-    if (opt.value === options.value) option.selected = true;
-    select.appendChild(option);
+  for (const opt of options) {
+    const o = document.createElement("option");
+    o.value = opt.value;
+    o.textContent = opt.text;
+    select.appendChild(o);
   }
-  select.addEventListener("change", () => options.onChange(select.value));
-  wrapper.append(label, select);
-  return wrapper;
+  select.value = selectedValue;
+  select.addEventListener("change", () => onChange(select.value));
+
+  group.appendChild(lbl);
+  group.appendChild(select);
+  return group;
 }
 
-export interface ToggleOptions {
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}
-
-export function createToggle(options: ToggleOptions): HTMLElement {
-  const wrapper = document.createElement("div");
-  wrapper.className = "control-group";
-  const label = document.createElement("label");
+export function createCheckbox(
+  label: string,
+  checked: boolean,
+  onChange: (val: boolean) => void
+): HTMLElement {
+  const wrapper = document.createElement("label");
+  wrapper.className = "control-checkbox";
   const input = document.createElement("input");
   input.type = "checkbox";
-  input.checked = options.checked;
-  input.addEventListener("change", () => options.onChange(input.checked));
-  label.append(input, " ", options.label);
-  wrapper.appendChild(label);
+  input.checked = checked;
+  input.addEventListener("change", () => onChange(input.checked));
+  const span = document.createElement("span");
+  span.textContent = label;
+  wrapper.appendChild(input);
+  wrapper.appendChild(span);
   return wrapper;
 }
 
-export interface StatsDisplay {
-  element: HTMLElement;
-  update(vertCount: number, faceCount: number, elapsedMs: number): void;
+export function createSeparator(): HTMLElement {
+  const sep = document.createElement("div");
+  sep.className = "control-separator";
+  return sep;
 }
 
-export function createStats(): StatsDisplay {
-  const wrapper = document.createElement("div");
-  wrapper.className = "stats";
-  const vertEl = document.createElement("div");
-  const faceEl = document.createElement("div");
-  const timeEl = document.createElement("div");
-  vertEl.textContent = "Vertices: —";
-  faceEl.textContent = "Faces: —";
-  timeEl.textContent = "Time: — ms";
-  wrapper.append(vertEl, faceEl, timeEl);
+export function createReadout(): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "info-readout";
+  return box;
+}
 
-  return {
-    element: wrapper,
-    update(vertCount: number, faceCount: number, elapsedMs: number) {
-      vertEl.textContent = `Vertices: ${vertCount.toLocaleString()}`;
-      faceEl.textContent = `Faces: ${faceCount.toLocaleString()}`;
-      timeEl.textContent = `Time: ${elapsedMs.toFixed(1)} ms`;
-    },
-  };
+export function updateReadout(
+  el: HTMLElement,
+  entries: { label: string; value: string }[]
+) {
+  el.innerHTML = entries
+    .map(
+      (e) =>
+        `<span class="label">${e.label}:</span> <span class="value">${e.value}</span>`
+    )
+    .join("<br>");
+}
+
+export function createInfoBox(html: string): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "info-box";
+  box.innerHTML = html;
+  return box;
 }
 
 export interface CodePanel {
@@ -116,11 +122,27 @@ export interface CodePanel {
 export function createCodePanel(initialCode: string = ""): CodePanel {
   const wrapper = document.createElement("div");
   wrapper.className = "code-panel";
+
+  const header = document.createElement("div");
+  header.className = "code-panel-header";
+  header.textContent = "▸ View Source Code";
+
+  const body = document.createElement("div");
+  body.className = "code-panel-body";
+
   const pre = document.createElement("pre");
   const code = document.createElement("code");
   code.textContent = initialCode;
   pre.appendChild(code);
-  wrapper.appendChild(pre);
+  body.appendChild(pre);
+
+  header.addEventListener("click", () => {
+    const isOpen = body.classList.toggle("open");
+    header.textContent = isOpen ? "▾ Source Code" : "▸ View Source Code";
+  });
+
+  wrapper.appendChild(header);
+  wrapper.appendChild(body);
 
   return {
     element: wrapper,
