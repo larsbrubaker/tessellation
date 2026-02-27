@@ -1,0 +1,1027 @@
+use crate::{
+    bitset::BitSet,
+    cell_configs::CELL_CONFIGS,
+    mesh::Mesh,
+    plane::Plane,
+    qef,
+    vertex_index::{neg_offset, offset, Index, VarIndex, VertexIndex, EDGES_ON_FACE},
+    AsUSize, BoundingBox, ImplicitFunction, RealField,
+};
+use nalgebra as na;
+use num_traits::Float;
+use rayon::prelude::*;
+use std::{
+    cell::{Cell, RefCell},
+    cmp,
+    collections::{BTreeSet, HashMap},
+    error, fmt,
+    sync::LazyLock,
+};
+
+const PRECISION: f32 = 0.05;
+
+//  Edge indexes
+//
+//      +-------9-------+
+//     /|              /|
+//    7 |            10 |              ^
+//   /  8            /  11            /
+//  +-------6-------+   |     ^    higher indexes in y
+//  |   |           |   |     |     /
+//  |   +-------3---|---+     |    /
+//  2  /            5  /  higher indexes
+//  | 1             | 4      in z
+//  |/              |/        |/
+//  o-------0-------+         +-- higher indexes in x ---->
+//
+// Point o is the reference point of the current cell.
+// All edges go from lower indexes to higher indexes.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Edge {
+    A = 0,
+    B = 1,
+    C = 2,
+    D = 3,
+    E = 4,
+    F = 5,
+    G = 6,
+    H = 7,
+    I = 8,
+    J = 9,
+    K = 10,
+    L = 11,
+}
+
+impl Edge {
+    pub fn from_usize(e: usize) -> Edge {
+        match e {
+            0 => Edge::A,
+            1 => Edge::B,
+            2 => Edge::C,
+            3 => Edge::D,
+            4 => Edge::E,
+            5 => Edge::F,
+            6 => Edge::G,
+            7 => Edge::H,
+            8 => Edge::I,
+            9 => Edge::J,
+            10 => Edge::K,
+            11 => Edge::L,
+            _ => panic!("Not edge for {:?}", e),
+        }
+    }
+    pub fn base(self) -> Edge {
+        Edge::from_usize(self as usize % 3)
+    }
+}
+
+const EDGE_OFFSET: [Index; 12] = [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 1, 0],
+    [1, 0, 0],
+    [1, 0, 0],
+    [0, 0, 1],
+    [0, 0, 1],
+    [0, 1, 0],
+    [0, 1, 1],
+    [1, 0, 1],
+    [1, 1, 0],
+];
+
+const QUADS: [[Edge; 4]; 3] = [
+    [Edge::A, Edge::G, Edge::J, Edge::D],
+    [Edge::B, Edge::E, Edge::K, Edge::H],
+    [Edge::C, Edge::I, Edge::L, Edge::F],
+];
+
+static OUTSIDE_EDGES_PER_CORNER: LazyLock<[BitSet; 8]> = LazyLock::new(|| {
+    [
+        BitSet::from_3bits(0, 1, 2),
+        BitSet::from_3bits(0, 4, 5),
+        BitSet::from_3bits(1, 3, 8),
+        BitSet::from_3bits(3, 4, 11),
+        BitSet::from_3bits(2, 6, 7),
+        BitSet::from_3bits(5, 6, 10),
+        BitSet::from_3bits(7, 8, 9),
+        BitSet::from_3bits(9, 10, 11),
+    ]
+});
+
+#[derive(Debug)]
+pub enum DualContouringError {
+    HitZero(String),
+}
+
+impl error::Error for DualContouringError {}
+
+impl fmt::Display for DualContouringError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            DualContouringError::HitZero(ref s) => write!(f, "Hit zero value for {}", s),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Vertex<S: RealField> {
+    index: Index,
+    qef: RefCell<qef::Qef<S>>,
+    neighbors: [Vec<VarIndex>; 6],
+    parent: Cell<Option<usize>>,
+    children: Vec<usize>,
+    mesh_index: Cell<Option<usize>>,
+    edge_intersections: [u32; 12],
+    euler_characteristic: i32,
+}
+
+impl<S: RealField> Clone for Vertex<S> {
+    fn clone(&self) -> Vertex<S> {
+        Vertex {
+            index: self.index,
+            qef: self.qef.clone(),
+            neighbors: [
+                self.neighbors[0].clone(),
+                self.neighbors[1].clone(),
+                self.neighbors[2].clone(),
+                self.neighbors[3].clone(),
+                self.neighbors[4].clone(),
+                self.neighbors[5].clone(),
+            ],
+            parent: self.parent.clone(),
+            children: self.children.clone(),
+            mesh_index: self.mesh_index.clone(),
+            edge_intersections: self.edge_intersections,
+            euler_characteristic: self.euler_characteristic,
+        }
+    }
+}
+
+impl<S: RealField> Vertex<S> {
+    fn is_2manifold(&self) -> bool {
+        if self.euler_characteristic != 1 {
+            return false;
+        }
+        for edges_on_face in EDGES_ON_FACE.iter() {
+            let mut sum = 0;
+            for edge in *edges_on_face {
+                sum += self.edge_intersections[edge];
+            }
+            if sum != 0 && sum != 2 {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct EdgeIndex {
+    edge: Edge,
+    index: Index,
+}
+
+impl EdgeIndex {
+    pub fn base(&self) -> EdgeIndex {
+        EdgeIndex {
+            edge: self.edge.base(),
+            index: offset(self.index, EDGE_OFFSET[self.edge as usize]),
+        }
+    }
+}
+
+/// Struct containing all the intermediary state for the different stages of tessellation.
+#[derive(Clone)]
+pub struct ManifoldDualContouring<'a, S: RealField> {
+    function: &'a dyn ImplicitFunction<S>,
+    origin: na::Point3<S>,
+    dim: [usize; 3],
+    mesh: RefCell<Mesh<S>>,
+    res: S,
+    error: S,
+    value_grid: HashMap<Index, S>,
+    edge_grid: RefCell<HashMap<EdgeIndex, Plane<S>>>,
+    vertex_octtree: Vec<Vec<Vertex<S>>>,
+    vertex_index_map: HashMap<VertexIndex, usize>,
+}
+
+fn pow2roundup(x: usize) -> usize {
+    let mut x = x;
+    x -= 1;
+    x |= x >> 1;
+    x |= x >> 2;
+    x |= x >> 4;
+    x |= x >> 8;
+    x |= x >> 16;
+    x |= x >> 32;
+    x + 1
+}
+
+fn get_connected_edges(edge: Edge, cell: BitSet) -> BitSet {
+    for &edge_set in CELL_CONFIGS[cell.as_u32() as usize].iter() {
+        if edge_set.get(edge as usize) {
+            return edge_set;
+        }
+    }
+    panic!("Did not find edge_set for {:?} and {:?}", edge, cell);
+}
+
+fn get_connected_edges_from_edge_set(edge_set: BitSet, cell: BitSet) -> Vec<BitSet> {
+    let mut result = Vec::new();
+    for &cell_edge_set in CELL_CONFIGS[cell.as_u32() as usize].iter() {
+        if !cell_edge_set.intersect(edge_set).empty() {
+            result.push(cell_edge_set);
+        }
+    }
+    debug_assert!(
+        result
+            .iter()
+            .fold(BitSet::zero(), |sum, x| sum.merge(*x))
+            .intersect(edge_set)
+            == edge_set,
+        "result: {:?} does not contain all edges from egde_set: {:?}",
+        result,
+        edge_set
+    );
+    result
+}
+
+fn half_index(input: &Index) -> Index {
+    [input[0] / 2, input[1] / 2, input[2] / 2]
+}
+
+fn add_connected_vertices_in_subcell<S: RealField>(
+    base: &[Vertex<S>],
+    start: &Vertex<S>,
+    neigbors: &mut BTreeSet<usize>,
+) {
+    let parent_index = half_index(&start.index);
+    for neighbor_index_vector in &start.neighbors {
+        for neighbor_index in neighbor_index_vector.iter() {
+            match *neighbor_index {
+                VarIndex::Index(vi) => {
+                    let neighbor = &base[vi];
+                    if half_index(&neighbor.index) == parent_index && neigbors.insert(vi) {
+                        add_connected_vertices_in_subcell(base, &base[vi], neigbors);
+                    }
+                }
+                VarIndex::VertexIndex(vi) => {
+                    panic!("unexpected VertexIndex {:?}", vi);
+                }
+            }
+        }
+    }
+}
+
+fn add_child_to_parent<S: RealField + Float + From<f32>>(
+    child: &Vertex<S>,
+    parent: &mut Vertex<S>,
+) {
+    parent.qef.borrow_mut().merge(&*child.qef.borrow());
+    for dim in 0..3 {
+        let relevant_neighbor = dim * 2 + (child.index[dim] & 1);
+        for neighbor in &child.neighbors[relevant_neighbor] {
+            if !parent.neighbors[relevant_neighbor].contains(neighbor) {
+                parent.neighbors[relevant_neighbor].push(*neighbor);
+            }
+        }
+    }
+}
+
+fn subsample_euler_characteristics<S: RealField>(
+    children: &BTreeSet<usize>,
+    vertices: &[Vertex<S>],
+) -> ([u32; 12], i32) {
+    let mut intersections = [0u32; 12];
+    let mut euler = 0i32;
+    let mut inner_sum = 0;
+    for vertex in children.iter().map(|i| &vertices[*i]) {
+        let i = vertex.index;
+        let corner_index = (i[2] & 1) << 2 | (i[1] & 1) << 1 | (i[0] & 1);
+        let outside_edges = OUTSIDE_EDGES_PER_CORNER[corner_index];
+        for (i, vertex_edge_intersection) in vertex.edge_intersections.iter().enumerate().take(12) {
+            if outside_edges.get(i) {
+                intersections[i] += vertex_edge_intersection;
+            } else {
+                inner_sum += vertex_edge_intersection;
+            }
+        }
+        euler += vertex.euler_characteristic;
+    }
+    debug_assert_eq!(
+        inner_sum % 4,
+        0,
+        "inner_sum {} is not divisible by 4.",
+        inner_sum
+    );
+    euler -= inner_sum as i32 / 4;
+    (intersections, euler)
+}
+
+fn subsample_octtree<S: RealField + Float + From<f32>>(base: &[Vertex<S>]) -> Vec<Vertex<S>> {
+    let mut result = Vec::new();
+    for (i, vertex) in base.iter().enumerate() {
+        if vertex.parent.get().is_none() {
+            let mut neighbor_set = BTreeSet::new();
+            neighbor_set.insert(i);
+            add_connected_vertices_in_subcell(base, vertex, &mut neighbor_set);
+            let (intersections, euler) = subsample_euler_characteristics(&neighbor_set, base);
+            let mut parent = Vertex {
+                index: half_index(&vertex.index),
+                qef: RefCell::new(qef::Qef::new(&[], BoundingBox::neg_infinity())),
+                neighbors: [
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ],
+                parent: Cell::new(None),
+                children: Vec::new(),
+                mesh_index: Cell::new(None),
+                edge_intersections: intersections,
+                euler_characteristic: euler,
+            };
+            for &neighbor_index in &neighbor_set {
+                let child = &base[neighbor_index];
+                debug_assert!(
+                    child.parent.get().is_none(),
+                    "child #{:?} already has parent #{:?}",
+                    neighbor_index,
+                    child.parent.get().unwrap()
+                );
+                debug_assert!(!parent.children.contains(&neighbor_index));
+                parent.children.push(neighbor_index);
+                add_child_to_parent(child, &mut parent);
+                child.parent.set(Some(result.len()));
+            }
+            result.push(parent);
+        }
+    }
+    for vertex in &mut result {
+        for neighbor_vec in &mut vertex.neighbors {
+            for neighbor in neighbor_vec.iter_mut() {
+                match *neighbor {
+                    VarIndex::VertexIndex(_) => panic!("unexpected VertexIndex in normal node."),
+                    VarIndex::Index(i) => {
+                        *neighbor = VarIndex::Index(base[i].parent.get().unwrap())
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+
+struct Timer {
+    t: std::time::Instant,
+}
+
+impl Timer {
+    fn new() -> Timer {
+        Timer {
+            t: std::time::Instant::now(),
+        }
+    }
+    fn elapsed(&mut self) -> std::time::Duration {
+        let now = std::time::Instant::now();
+        let result = now - self.t;
+        self.t = now;
+        result
+    }
+}
+
+impl<'a, S: From<f32> + RealField + Float + AsUSize> ManifoldDualContouring<'a, S> {
+    /// Constructor
+    /// f: function to tessellate
+    /// res: resolution
+    /// relative_error: acceptable error threshold when simplifying the mesh.
+    pub fn new(
+        f: &'a dyn ImplicitFunction<S>,
+        res: S,
+        relative_error: S,
+    ) -> ManifoldDualContouring<'a, S> {
+        let one: S = From::from(1f32);
+        let bbox = f.bbox().dilate(one + res * From::from(1.1f32));
+        ManifoldDualContouring {
+            function: f,
+            origin: bbox.min,
+            dim: [
+                Float::ceil(bbox.dim()[0] / res).as_usize(),
+                Float::ceil(bbox.dim()[1] / res).as_usize(),
+                Float::ceil(bbox.dim()[2] / res).as_usize(),
+            ],
+            mesh: RefCell::new(Mesh {
+                vertices: Vec::new(),
+                faces: Vec::new(),
+            }),
+            res,
+            error: res * relative_error,
+            value_grid: HashMap::new(),
+            edge_grid: RefCell::new(HashMap::new()),
+            vertex_octtree: Vec::new(),
+            vertex_index_map: HashMap::new(),
+        }
+    }
+    /// Tessellate the given function.
+    pub fn tessellate(&mut self) -> Option<Mesh<S>> {
+        println!(
+            "ManifoldDualContouring: res: {:} {:?}",
+            self.res,
+            self.function.bbox()
+        );
+        loop {
+            match self.try_tessellate() {
+                Ok(mesh) => return Some(mesh),
+                Err(e) => {
+                    let padding = na::Vector3::new(
+                        -self.res / From::from(10. + rand::random::<f32>().abs()),
+                        -self.res / From::from(10. + rand::random::<f32>().abs()),
+                        -self.res / From::from(10. + rand::random::<f32>().abs()),
+                    );
+                    println!("Error: {:?}. moving by {:?} and retrying.", e, padding);
+                    self.origin += padding;
+                    self.value_grid.clear();
+                    self.mesh.borrow_mut().vertices.clear();
+                    self.mesh.borrow_mut().faces.clear();
+                    self.vertex_octtree.clear();
+                    self.vertex_index_map.clear();
+                }
+            }
+        }
+    }
+
+    fn tessellation_step1(&mut self) -> Option<DualContouringError> {
+        let maxdim = cmp::max(self.dim[0], cmp::max(self.dim[1], self.dim[2]));
+        let origin = self.origin;
+        let origin_value = self.function.value(&origin);
+
+        self.sample_value_grid([0, 0, 0], origin, pow2roundup(maxdim), origin_value)
+    }
+
+    fn try_tessellate(&mut self) -> Result<Mesh<S>, DualContouringError> {
+        let mut t = Timer::new();
+        if let Some(e) = self.tessellation_step1() {
+            return Err(e);
+        }
+        let total_cells = self.dim[0] * self.dim[1] * self.dim[2];
+        println!(
+            "generated value_grid with {:} % of {:} cells in {:?}.",
+            (100 * self.value_grid.len()) as f64 / total_cells as f64,
+            total_cells,
+            t.elapsed()
+        );
+
+        self.compact_value_grid();
+        println!(
+            "compacted value_grid, now {:} % of {:} cells in {:?}.",
+            (100 * self.value_grid.len()) as f64 / total_cells as f64,
+            total_cells,
+            t.elapsed()
+        );
+
+        self.generate_edge_grid();
+
+        println!(
+            "generated edge_grid with {} edges: {:?}",
+            self.edge_grid.borrow().len(),
+            t.elapsed()
+        );
+
+        let (leafs, index_map) = self.generate_leaf_vertices();
+        self.vertex_index_map = index_map;
+        self.vertex_octtree.push(leafs);
+
+        println!(
+            "generated {:?} leaf vertices: {:?}",
+            self.vertex_octtree[0].len(),
+            t.elapsed()
+        );
+
+        loop {
+            let next = subsample_octtree(self.vertex_octtree.last().unwrap());
+            if next.len() == self.vertex_octtree.last().unwrap().len() {
+                break;
+            }
+            self.vertex_octtree.push(next);
+        }
+        println!("subsampled octtree {:?}", t.elapsed());
+
+        let num_qefs_solved = self.solve_qefs();
+
+        println!("solved {} qefs: {:?}", num_qefs_solved, t.elapsed());
+
+        for edge_index in self.edge_grid.borrow().keys() {
+            self.compute_quad(*edge_index);
+        }
+        println!("generated quads: {:?}", t.elapsed());
+
+        println!(
+            "computed mesh with {:?} faces.",
+            self.mesh.borrow().faces.len()
+        );
+
+        Ok(self.mesh.borrow().clone())
+    }
+
+    fn sample_value_grid(
+        &mut self,
+        idx: Index,
+        pos: na::Point3<S>,
+        size: usize,
+        val: S,
+    ) -> Option<DualContouringError> {
+        debug_assert!(size > 1);
+        let mut midx = idx;
+        let size = size / 2;
+        let size_s: S = From::from(size as f32);
+        let vpos = [
+            pos,
+            pos + na::Vector3::new(self.res, self.res, self.res) * size_s,
+        ];
+        let sub_cube_diagonal = size_s * self.res * Float::sqrt(From::from(3f32));
+
+        for z in 0..2 {
+            for y in 0..2 {
+                for x in 0..2 {
+                    let mpos = na::Point3::new(vpos[x].x, vpos[y].y, vpos[z].z);
+                    let value = if midx == idx {
+                        val
+                    } else {
+                        self.function.value(&mpos)
+                    };
+
+                    if value == From::from(0f32) {
+                        return Some(DualContouringError::HitZero(format!("{}", mpos)));
+                    }
+
+                    if size > 1 && Float::abs(value) <= sub_cube_diagonal {
+                        if let Some(e) = self.sample_value_grid(midx, mpos, size, value) {
+                            return Some(e);
+                        }
+                    } else {
+                        self.value_grid.insert(midx, value);
+                    }
+                    midx[0] += size;
+                }
+                midx[0] -= 2 * size;
+                midx[1] += size;
+            }
+            midx[1] -= 2 * size;
+            midx[2] += size;
+        }
+        None
+    }
+
+    fn compact_value_grid(&mut self) {
+        let value_grid = &mut self.value_grid;
+        let keys_to_remove: Vec<_> = value_grid
+            .par_iter()
+            .filter(|&(idx, &v)| {
+                if idx[0] == 0 || idx[1] == 0 || idx[2] == 0 {
+                    return false;
+                }
+                for z in 0..3 {
+                    for y in 0..3 {
+                        for x in 0..3 {
+                            let adjacent_idx = [idx[0] + x - 1, idx[1] + y - 1, idx[2] + z - 1];
+                            if let Some(&adjacent_value) = value_grid.get(&adjacent_idx) {
+                                if Float::signum(v) != Float::signum(adjacent_value) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+                true
+            })
+            .map(|(k, _)| *k)
+            .collect();
+        for k in keys_to_remove {
+            value_grid.remove(&k);
+        }
+        value_grid.shrink_to_fit();
+    }
+
+    fn generate_edge_grid(&mut self) {
+        let mut edge_grid = self.edge_grid.borrow_mut();
+        for (&point_idx, &point_value) in &self.value_grid {
+            for &edge in &[Edge::A, Edge::B, Edge::C] {
+                let mut adjacent_idx = point_idx;
+                adjacent_idx[edge as usize] += 1;
+                if let Some(&adjacent_value) = self.value_grid.get(&adjacent_idx) {
+                    let point_pos = self.origin
+                        + na::Vector3::new(
+                            From::from(point_idx[0] as f32),
+                            From::from(point_idx[1] as f32),
+                            From::from(point_idx[2] as f32),
+                        ) * self.res;
+                    let mut adjacent_pos = point_pos;
+                    adjacent_pos[edge as usize] += self.res;
+                    if let Some(plane) =
+                        self.find_zero(point_pos, point_value, adjacent_pos, adjacent_value)
+                    {
+                        edge_grid.insert(
+                            EdgeIndex {
+                                edge,
+                                index: point_idx,
+                            },
+                            plane,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn solve_qefs(&self) -> usize {
+        let mut num_solved = 0;
+        if let Some(top_layer) = self.vertex_octtree.last() {
+            for i in 0..top_layer.len() {
+                num_solved += self.recursively_solve_qefs(&self.vertex_octtree.len() - 1, i);
+            }
+        }
+        num_solved
+    }
+
+    fn recursively_solve_qefs(&self, layer: usize, index_in_layer: usize) -> usize {
+        let vertex = &self.vertex_octtree[layer][index_in_layer];
+        assert!(vertex.children.is_empty() || layer > 0);
+        let error;
+        {
+            let mut qef = vertex.qef.borrow_mut();
+            debug_assert!(
+                qef.error.is_nan(),
+                "found solved qef layer {:?} index {:?} {:?} parent: {:?}",
+                layer,
+                index_in_layer,
+                vertex.index,
+                vertex.parent
+            );
+            qef.solve();
+            error = qef.error;
+        }
+        let mut num_solved = 1;
+        if Float::abs(error) > self.error {
+            for &child_index in &vertex.children {
+                num_solved += self.recursively_solve_qefs(layer - 1, child_index);
+            }
+        }
+        num_solved
+    }
+
+    fn generate_leaf_vertices(&self) -> (Vec<Vertex<S>>, HashMap<VertexIndex, usize>) {
+        let mut index_map = HashMap::new();
+        let mut vertices = Vec::new();
+        for edge_index in self.edge_grid.borrow().keys() {
+            self.add_vertices_for_minimal_egde(edge_index, &mut vertices, &mut index_map);
+        }
+        for vertex in &mut vertices {
+            for neighbor_vec in &mut vertex.neighbors {
+                for neighbor in neighbor_vec.iter_mut() {
+                    match *neighbor {
+                        VarIndex::VertexIndex(vi) => *neighbor = VarIndex::Index(index_map[&vi]),
+                        VarIndex::Index(_) => panic!("unexpected Index in fresh leaf map."),
+                    }
+                }
+            }
+        }
+        for vi in 0..vertices.len() {
+            for np in 0..vertices[vi].neighbors.len() {
+                for ni in 0..vertices[vi].neighbors[np].len() {
+                    match vertices[vi].neighbors[np][ni] {
+                        VarIndex::VertexIndex(_) => panic!("unexpected VertexIndex."),
+                        VarIndex::Index(i) => {
+                            debug_assert!(
+                                vertices[i].neighbors[np ^ 1].contains(&VarIndex::Index(vi)),
+                                "vertex[{}].neighbors[{}][{}]=={:?},
+                                 but vertex[{}].neighbors[{}]=={:?}\n{:?} vs. {:?}",
+                                vi,
+                                np,
+                                ni,
+                                vertices[vi].neighbors[np][ni],
+                                i,
+                                np ^ 1,
+                                vertices[i].neighbors[np ^ 1],
+                                vertices[vi],
+                                vertices[i]
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        (vertices, index_map)
+    }
+    fn add_vertices_for_minimal_egde(
+        &self,
+        edge_index: &EdgeIndex,
+        vertices: &mut Vec<Vertex<S>>,
+        index_map: &mut HashMap<VertexIndex, usize>,
+    ) {
+        debug_assert!((edge_index.edge as usize) < 4);
+        let cell_size = na::Vector3::new(self.res, self.res, self.res);
+        for &quad_egde in &QUADS[edge_index.edge as usize] {
+            let idx = neg_offset(edge_index.index, EDGE_OFFSET[quad_egde as usize]);
+
+            let edge_set = get_connected_edges(quad_egde, self.bitset_for_cell(idx));
+            let vertex_index = VertexIndex {
+                edges: edge_set,
+                index: idx,
+            };
+            index_map.entry(vertex_index).or_insert_with(|| {
+                let mut neighbors = [
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ];
+                for (i, neighbor) in neighbors.iter_mut().enumerate().take(6) {
+                    if let Some(mut neighbor_index) = vertex_index.neighbor(i) {
+                        for edges in get_connected_edges_from_edge_set(
+                            neighbor_index.edges,
+                            self.bitset_for_cell(neighbor_index.index),
+                        ) {
+                            neighbor_index.edges = edges;
+                            let idx = VarIndex::VertexIndex(neighbor_index);
+                            if !neighbor.contains(&idx) {
+                                neighbor.push(idx);
+                            }
+                        }
+                    }
+                }
+                let mut intersections = [0u32; 12];
+                for edge in edge_set {
+                    intersections[edge] = 1;
+                }
+                let tangent_planes: Vec<_> = edge_set
+                    .map(|edge| {
+                        self.get_edge_tangent_plane(&EdgeIndex {
+                            edge: Edge::from_usize(edge),
+                            index: idx,
+                        })
+                    })
+                    .collect();
+                let cell_origin = self.origin
+                    + na::Vector3::new(
+                        From::from(idx[0] as f32),
+                        From::from(idx[1] as f32),
+                        From::from(idx[2] as f32),
+                    ) * self.res;
+                vertices.push(Vertex {
+                    index: idx,
+                    qef: RefCell::new(qef::Qef::new(
+                        &tangent_planes,
+                        BoundingBox::new(&cell_origin, &(cell_origin + cell_size)),
+                    )),
+                    neighbors,
+                    parent: Cell::new(None),
+                    children: Vec::new(),
+                    mesh_index: Cell::new(None),
+                    edge_intersections: intersections,
+                    euler_characteristic: 1,
+                });
+                vertices.len() - 1
+            });
+        }
+    }
+
+    fn get_edge_tangent_plane(&self, edge_index: &EdgeIndex) -> Plane<S> {
+        if let Some(ref plane) = self.edge_grid.borrow().get(&edge_index.base()) {
+            return **plane;
+        }
+        panic!(
+            "could not find edge_point: {:?} -> {:?}",
+            edge_index,
+            edge_index.base()
+        );
+    }
+
+    fn lookup_cell_point(&self, edge: Edge, idx: Index) -> usize {
+        let edge_set = get_connected_edges(edge, self.bitset_for_cell(idx));
+        let vertex_index = VertexIndex {
+            edges: edge_set,
+            index: idx,
+        };
+
+        let mut octtree_index = self.vertex_index_map[&vertex_index];
+        let mut octtree_layer = 0;
+        loop {
+            let next_index = self.vertex_octtree[octtree_layer][octtree_index]
+                .parent
+                .get()
+                .unwrap();
+            let next_vertex = &self.vertex_octtree[octtree_layer + 1][next_index];
+            let error = next_vertex.qef.borrow().error;
+            if (!error.is_nan() && error > (self.error))
+                || (octtree_layer == self.vertex_octtree.len() - 2)
+                || !next_vertex.is_2manifold()
+            {
+                break;
+            }
+            octtree_layer += 1;
+            octtree_index = next_index;
+        }
+        let vertex = &self.vertex_octtree[octtree_layer][octtree_index];
+        if let Some(mesh_index) = vertex.mesh_index.get() {
+            return mesh_index;
+        }
+        if vertex.qef.borrow().error.is_nan() {
+            vertex.qef.borrow_mut().solve()
+        }
+        let qef_solution = vertex.qef.borrow().solution;
+        let vertex_list = &mut self.mesh.borrow_mut().vertices;
+        let result = vertex_list.len();
+        vertex.mesh_index.set(Some(result));
+        vertex_list.push([qef_solution.x, qef_solution.y, qef_solution.z]);
+        result
+    }
+
+    fn bitset_for_cell(&self, idx: Index) -> BitSet {
+        let mut idx = idx;
+        let mut result = BitSet::zero();
+        for z in 0..2 {
+            for y in 0..2 {
+                for x in 0..2 {
+                    if let Some(&v) = self.value_grid.get(&idx) {
+                        if v < From::from(0f32) {
+                            result.set(z << 2 | y << 1 | x);
+                        }
+                    } else {
+                        panic!("did not find value_grid[{:?}]", idx);
+                    }
+                    idx[0] += 1;
+                }
+                idx[0] -= 2;
+                idx[1] += 1;
+            }
+            idx[1] -= 2;
+            idx[2] += 1;
+        }
+        result
+    }
+
+    fn compute_quad(&self, edge_index: EdgeIndex) {
+        debug_assert!((edge_index.edge as usize) < 4);
+        debug_assert!(edge_index.index.iter().all(|&i| i > 0));
+
+        let mut p = Vec::with_capacity(4);
+        for &quad_egde in &QUADS[edge_index.edge as usize] {
+            let point_index = self.lookup_cell_point(
+                quad_egde,
+                neg_offset(edge_index.index, EDGE_OFFSET[quad_egde as usize]),
+            );
+            if !p.contains(&point_index) {
+                p.push(point_index)
+            }
+        }
+        if p.len() < 3 {
+            return;
+        }
+        if let Some(&v) = self.value_grid.get(&edge_index.index) {
+            if v < From::from(0f32) {
+                p.reverse();
+            }
+        }
+        let face_list = &mut self.mesh.borrow_mut().faces;
+        face_list.push([p[0], p[1], p[2]]);
+        if p.len() == 4 {
+            face_list.push([p[2], p[3], p[0]]);
+        }
+    }
+
+    fn find_zero(&self, a: na::Point3<S>, av: S, b: na::Point3<S>, bv: S) -> Option<Plane<S>> {
+        assert!(a != b);
+        if Float::signum(av) == Float::signum(bv) {
+            return None;
+        }
+        let d = a - b;
+        let mut distance = Float::max(
+            Float::max(Float::abs(d.x), Float::abs(d.y)),
+            Float::abs(d.z),
+        );
+        distance = Float::min(Float::min(distance, Float::abs(av)), Float::abs(bv));
+        let precision: S = From::from(PRECISION);
+        if distance < precision * self.res {
+            let result = if Float::abs(bv) < Float::abs(av) {
+                &b
+            } else {
+                &a
+            };
+            return Some(Plane {
+                p: *result,
+                n: self.function.normal(result),
+            });
+        }
+        let n = a + (b - a) * (Float::abs(av) / Float::abs(bv - av));
+        let nv = self.function.value(&n);
+
+        if Float::signum(av) != Float::signum(nv) {
+            self.find_zero(a, av, n, nv)
+        } else {
+            self.find_zero(n, nv, b, bv)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_connected_edges_from_edge_set;
+    use crate::bitset::BitSet;
+    use nalgebra as na;
+    //  Corner indexes
+    //
+    //      6---------------7
+    //     /|              /|
+    //    / |             / |
+    //   /  |            /  |
+    //  4---------------5   |
+    //  |   |           |   |
+    //  |   2-----------|---3
+    //  |  /            |  /
+    //  | /             | /
+    //  |/              |/
+    //  0---------------1
+
+    //  Edge indexes
+    //
+    //      +-------9-------+
+    //     /|              /|
+    //    7 |            10 |              ^
+    //   /  8            /  11            /
+    //  +-------6-------+   |     ^    higher indexes in y
+    //  |   |           |   |     |     /
+    //  |   +-------3---|---+     |    /
+    //  2  /            5  /  higher indexes
+    //  | 1             | 4      in z
+    //  |/              |/        |/
+    //  o-------0-------+         +-- higher indexes in x ---->
+
+    #[test]
+    fn connected_edges() {
+        let cell = BitSet::from_4bits(0, 6, 3, 5);
+        let edge_set = BitSet::from_4bits(4, 5, 10, 11);
+        let connected_edges = get_connected_edges_from_edge_set(edge_set, cell);
+        assert_eq!(connected_edges.len(), 2);
+        assert!(connected_edges.contains(&BitSet::from_4bits(5, 5, 6, 10)));
+        assert!(connected_edges.contains(&BitSet::from_4bits(3, 3, 4, 11)));
+    }
+
+    struct UnitSphere {
+        bbox: super::BoundingBox<f64>,
+    }
+    impl UnitSphere {
+        fn new() -> UnitSphere {
+            UnitSphere {
+                bbox: super::BoundingBox::new(
+                    &na::Point3::new(-1., -1., -1.),
+                    &na::Point3::new(1., 1., 1.),
+                ),
+            }
+        }
+    }
+
+    impl super::ImplicitFunction<f64> for UnitSphere {
+        fn bbox(&self) -> &super::BoundingBox<f64> {
+            &self.bbox
+        }
+        fn value(&self, p: &na::Point3<f64>) -> f64 {
+            na::Vector3::new(p.x, p.y, p.z).norm() - 1.0
+        }
+        fn normal(&self, p: &na::Point3<f64>) -> na::Vector3<f64> {
+            na::Vector3::new(p.x, p.y, p.z).normalize()
+        }
+    }
+
+    #[test]
+    fn unit_sphere_without_simplification() -> Result<(), crate::mesh::MeshError> {
+        let sphere = UnitSphere::new();
+        let mut mdc = super::ManifoldDualContouring::new(&sphere, 0.2, 0.0);
+        let mesh = mdc.tessellate().unwrap();
+        println!(
+            "mesh hash {} vertices and {} faces",
+            mesh.vertices.len(),
+            mesh.faces.len()
+        );
+        mesh.is_closed()
+    }
+
+    #[test]
+    #[ignore]
+    // This test exposes https://github.com/hmeyer/tessellation/issues/7
+    fn unit_sphere_with_simplification() -> Result<(), crate::mesh::MeshError> {
+        let sphere = UnitSphere::new();
+        let mut mdc = super::ManifoldDualContouring::new(&sphere, 0.2, 0.1);
+        let mesh = mdc.tessellate().unwrap();
+        println!(
+            "mesh hash {} vertices and {} faces",
+            mesh.vertices.len(),
+            mesh.faces.len()
+        );
+        mesh.is_closed()
+    }
+}

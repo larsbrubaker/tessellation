@@ -1,0 +1,37 @@
+[package]
+name = "tessellation"
+version = "0.9.0"
+authors = ["Henning Meyer <tutmann@gmail.com>", "Lars Brubaker"]
+edition = "2021"
+rust-version = "1.80"
+
+description = "3D tessellation library implementing Manifold Dual Contouring."
+repository = "https://github.com/larsbrubaker/tessellation"
+homepage = "https://larsbrubaker.github.io/tessellation/"
+readme = "README.md"
+keywords = ["tessellation", "3d", "manifold", "dual-contouring"]
+license = "Apache-2.0 OR MIT"
+
+exclude = [
+    "demo/",
+    "docs/",
+    ".github/",
+    ".claude/",
+    ".cursor/",
+]
+
+[workspace]
+members = ["."]
+
+[lib]
+name = "tessellation"
+path = "src/lib.rs"
+
+[dependencies]
+nalgebra = "0.33"
+num-traits = "0.2"
+rand = "0.8"
+rayon = "1"
+
+[dev-dependencies]
+approx = "0.5"
