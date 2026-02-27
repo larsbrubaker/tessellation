@@ -1,4 +1,7 @@
-**/target/
+/target
 Cargo.lock
-*~
-*.bk
+demo/node_modules/
+demo/dist/
+demo/public/pkg/
+*.wasm
+.DS_Store

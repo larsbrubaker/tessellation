@@ -21,7 +21,7 @@ exclude = [
 ]
 
 [workspace]
-members = ["."]
+members = [".", "demo/wasm"]
 
 [lib]
 name = "tessellation"

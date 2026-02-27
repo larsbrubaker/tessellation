@@ -49,6 +49,8 @@ mod manifold_dual_contouring;
 mod mesh;
 mod plane;
 mod qef;
+/// Composable SDF primitives and CSG operations implementing [`ImplicitFunction`].
+pub mod sdf;
 mod vertex_index;
 
 pub use self::bounding_box::BoundingBox;
@@ -69,6 +71,18 @@ pub trait ImplicitFunction<S: Debug + RealField> {
     fn value(&self, p: &na::Point3<S>) -> S;
     /// Compute the normal of the function at p.
     fn normal(&self, p: &na::Point3<S>) -> na::Vector3<S>;
+}
+
+impl<S: Debug + RealField> ImplicitFunction<S> for Box<dyn ImplicitFunction<S>> {
+    fn bbox(&self) -> &BoundingBox<S> {
+        (**self).bbox()
+    }
+    fn value(&self, p: &na::Point3<S>) -> S {
+        (**self).value(p)
+    }
+    fn normal(&self, p: &na::Point3<S>) -> na::Vector3<S> {
+        (**self).normal(p)
+    }
 }
 
 /// Trait which allows to convert Self to usize, since To<usize> is not implemented by f32 and f64.
